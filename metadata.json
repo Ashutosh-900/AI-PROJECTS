@@ -1,0 +1,6 @@
+{
+  "name": "ORBITRA Ground Station — COSMIC ERA",
+  "description": "CubeSat ground-station telemetry dashboard for ORBITRA'26 (MMMUT Gorakhpur, Drone & IoT Club) by Team COSMIC ERA.",
+  "requestFramePermissions": ["serial", "usb"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
