@@ -111,4 +111,39 @@ test('calculatePacketLoss computes correct loss percentage', () => {
 
   // 90 packets received out of 100 expected -> 10%
   assert.equal(calculatePacketLoss(90, 200, 101), 10);
+
+  // Sequence starting at ID 1 (typical hardware test)
+  assert.equal(calculatePacketLoss(50, 50, 1), 0);
+  assert.equal(calculatePacketLoss(45, 50, 1), 10);
+});
+
+test('parseTelemetryLine correctly handles Zyro aliases and accelerometer in Gs', () => {
+  const line = '{"id":1,"t":25.0,"h":50.0,"p":1013.25,"alt":100,"ax":0.01,"ay":-0.02,"az":1.0,"zyro_x":0.5,"zyro_y":-0.2,"zyro_z":0.1}';
+  const parsed = parseTelemetryLine(line);
+  assert.notEqual(parsed, null);
+  assert.equal(parsed?.id, 1);
+  assert.equal(parsed?.gx, 0.5);
+  assert.equal(parsed?.gy, -0.2);
+  assert.equal(parsed?.gz, 0.1);
+  // Az was 1.0G -> normalized to ~9.81 m/s²
+  assert.ok(parsed?.az && Math.abs(parsed.az - 9.81) < 0.1, `Az was ${parsed?.az}`);
+});
+
+test('parseTelemetryLine safely handles unacquired GPS lock with zero coordinates', () => {
+  const line = '{"id":2,"t":24.0,"h":45.0,"p":1012.0,"alt":95,"ax":0,"ay":0,"az":9.81,"lat":0.0,"lon":0.0,"fix":0}';
+  const parsed = parseTelemetryLine(line);
+  assert.notEqual(parsed, null);
+  assert.equal(parsed?.fix, 0);
+  assert.equal(parsed?.lat, undefined);
+  assert.equal(parsed?.lon, undefined);
+});
+
+test('calculateDewPoint handles extreme inputs without NaN or infinity', () => {
+  assert.equal(calculateDewPoint(undefined, 50), 0);
+  assert.equal(calculateDewPoint(25, 0), 0);
+  assert.equal(calculateDewPoint(25, -10), 0);
+  assert.equal(calculateDewPoint(NaN, 50), 0);
+  // At 100% RH, dew point equals temperature
+  const dp100 = calculateDewPoint(20, 100);
+  assert.equal(dp100, 20);
 });

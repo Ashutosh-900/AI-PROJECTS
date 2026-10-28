@@ -20,10 +20,18 @@ import {
   Power,
   Sliders,
   Check,
+  ChevronDown,
+  ChevronUp,
+  Cable,
+  Cpu,
+  ShieldCheck,
+  Terminal,
 } from 'lucide-react';
-import { ConnectionMode, ConnectionState, TelemetryPacket } from '../types/telemetry';
+import { ConnectionMode, ConnectionState, BoardType, TelemetryPacket } from '../types/telemetry';
 
 interface SerialDiagnosticsModalProps {
+  boardType?: BoardType;
+  setBoardType?: (b: BoardType) => void;
   connectionState: ConnectionState;
   connectionMode: ConnectionMode;
   baudRate: number;
@@ -37,11 +45,15 @@ interface SerialDiagnosticsModalProps {
   forceResetSerial?: () => void;
   pulseDTR?: () => void;
   rebootESP32?: () => void;
+  unstickESP32TypeB?: () => void;
+  armRealHardwareMode?: () => void;
   injectTestPacket?: () => void;
   tareZero: () => void;
 }
 
 export const SerialDiagnosticsModal: React.FC<SerialDiagnosticsModalProps> = ({
+  boardType = 'TYPE_B',
+  setBoardType,
   connectionState,
   connectionMode,
   baudRate,
@@ -55,6 +67,8 @@ export const SerialDiagnosticsModal: React.FC<SerialDiagnosticsModalProps> = ({
   forceResetSerial,
   pulseDTR,
   rebootESP32,
+  unstickESP32TypeB,
+  armRealHardwareMode,
   injectTestPacket,
   tareZero,
 }) => {
@@ -62,6 +76,7 @@ export const SerialDiagnosticsModal: React.FC<SerialDiagnosticsModalProps> = ({
   const [hasSerialSupport, setHasSerialSupport] = useState<boolean>(true);
   const [knownPortsCount, setKnownPortsCount] = useState<number>(0);
   const [pulseSuccess, setPulseSuccess] = useState<string | null>(null);
+  const [showTroubleshootingGuide, setShowTroubleshootingGuide] = useState<boolean>(true);
 
   useEffect(() => {
     setIsIframe(window.self !== window.top);
@@ -82,306 +97,427 @@ export const SerialDiagnosticsModal: React.FC<SerialDiagnosticsModalProps> = ({
     window.open(window.location.href, '_blank');
   };
 
-  const handlePulse = (actionName: string, fn?: () => void) => {
+  const handleAction = (actionName: string, fn?: () => void) => {
     if (fn) {
       fn();
       setPulseSuccess(actionName);
-      setTimeout(() => setPulseSuccess(null), 2500);
+      setTimeout(() => setPulseSuccess(null), 2800);
     }
   };
 
   return (
-    <div className="w-full bg-[#0b1325]/95 border border-cyan-500/30 rounded-xl p-4 shadow-[0_4px_24px_rgba(0,0,0,0.5)] flex flex-col gap-3">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between pb-3 border-b border-cyan-500/20 gap-2">
-        <div className="flex items-center gap-2">
-          <Usb className="w-5 h-5 text-cyan-400" />
-          <span className="text-sm font-mono font-bold tracking-wider text-white uppercase">
-            ESP32 TYPE-C & WEB SERIAL HARDWARE DIAGNOSTICS
-          </span>
+    <div className="w-full bg-[#0b1325]/95 border border-cyan-500/30 rounded-xl p-4 shadow-[0_4px_24px_rgba(0,0,0,0.5)] flex flex-col gap-3 font-mono">
+      {/* Top Header: Hardware Profile & Real Connection Status */}
+      <div className="flex flex-wrap items-center justify-between pb-3 border-b border-cyan-500/20 gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-cyan-950 border border-cyan-400/40 flex items-center justify-center text-cyan-300 shadow-[0_0_10px_rgba(34,211,238,0.3)]">
+            <Usb className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold tracking-wider text-white uppercase">
+                ESP32 TYPE-B (MICRO-USB) SERIAL DIAGNOSTICS & TESTBENCH
+              </span>
+              <span className="px-2 py-0.5 rounded text-[10px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold">
+                REAL HW READY
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Configured for CP2102 / CH340 / FT232 USB-UART Bridge on 8-N-1 Serial
+            </p>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* Board Selection & Live Status Pills */}
+        <div className="flex items-center flex-wrap gap-2">
+          {setBoardType && (
+            <div className="flex items-center bg-slate-900 border border-slate-700 rounded-lg p-0.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setBoardType('TYPE_B')}
+                className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all ${
+                  boardType === 'TYPE_B'
+                    ? 'bg-cyan-500 text-slate-950 shadow-[0_0_10px_rgba(6,182,212,0.5)]'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                ESP32 TYPE-B (MICRO-USB)
+              </button>
+              <button
+                type="button"
+                onClick={() => setBoardType('TYPE_C')}
+                className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all ${
+                  boardType === 'TYPE_C'
+                    ? 'bg-cyan-500 text-slate-950 shadow-[0_0_10px_rgba(6,182,212,0.5)]'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                ESP32 TYPE-C (NATIVE CDC)
+              </button>
+            </div>
+          )}
+
           <span
-            className={`text-xs font-mono px-2.5 py-0.5 rounded border font-semibold ${
+            className={`text-xs px-2.5 py-1 rounded border font-semibold ${
               connectionState === 'CONNECTED'
-                ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40 shadow-[0_0_8px_rgba(16,185,129,0.2)]'
+                ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
                 : connectionState === 'STALE'
-                ? 'bg-amber-950/90 text-amber-300 border-amber-500/60 animate-pulse shadow-[0_0_12px_rgba(245,158,11,0.3)]'
+                ? 'bg-amber-950/90 text-amber-300 border-amber-500/60 animate-pulse'
                 : connectionState === 'DEMO'
                 ? 'bg-purple-950/80 text-purple-300 border-purple-500/40'
                 : 'bg-rose-950/80 text-rose-300 border-rose-500/40'
             }`}
           >
-            STATUS: {connectionState} ({connectionMode})
+            {connectionState === 'DEMO' ? 'SIMULATOR ACTIVE' : `HW: ${connectionState}`}
           </span>
         </div>
       </div>
 
-      {/* STALE OR ALREADY OPEN RESOLUTION BANNER */}
-      {(connectionState === 'STALE' || connectionError?.includes('already open')) && (
-        <div className="bg-gradient-to-r from-amber-950/80 via-slate-900 to-amber-950/80 border-2 border-amber-500/60 rounded-xl p-4 text-xs font-mono shadow-[0_0_20px_rgba(245,158,11,0.25)] flex flex-col gap-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-400/40 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5 text-amber-400 animate-pulse" />
-              </div>
-              <div>
-                <h4 className="font-bold text-amber-300 text-sm tracking-wide">
-                  PORT IS {connectionState === 'STALE' ? 'STALE (AWAITING DATA)' : 'ALREADY OPEN'} — TROUBLESHOOTING & RECOVERY
-                </h4>
-                <p className="text-slate-300 text-[11px] mt-0.5">
-                  The USB serial port connection is established, but no active telemetry packet is reaching the parser.
-                </p>
-              </div>
-            </div>
-
-            {pulseSuccess && (
-              <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500 text-slate-950 rounded font-bold text-[11px] shrink-0 animate-fade-in">
-                <Check className="w-3.5 h-3.5" />
-                <span>{pulseSuccess} OK!</span>
-              </div>
-            )}
+      {/* Action Feedback Banner */}
+      {pulseSuccess && (
+        <div className="bg-emerald-950/80 border border-emerald-500/50 rounded-lg p-2.5 text-xs text-emerald-200 flex items-center justify-between animate-fade-in">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <span className="font-bold">{pulseSuccess} EXECUTED SUCCESSFULLY</span>
           </div>
-
-          {/* Root cause bullets */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px] bg-slate-950/60 p-2.5 rounded border border-amber-500/20">
-            <div className="text-slate-300">
-              <strong className="text-amber-400">1. Ground Station RX waiting for TX:</strong>
-              <div className="text-slate-400 mt-0.5">
-                The Ground Station ESP32 only sends serial lines when it receives ESP-NOW packets from the CubeSat TX. Ensure TX is powered ON.
-              </div>
-            </div>
-            <div className="text-slate-300">
-              <strong className="text-cyan-400">2. Type-C USB CDC Dormant:</strong>
-              <div className="text-slate-400 mt-0.5">
-                Native USB Type-C ESP32s (S2/S3/C3) require DTR/RTS lines High to begin UART streaming.
-              </div>
-            </div>
-            <div className="text-slate-300">
-              <strong className="text-purple-400">3. Conflicting App / Locked Port:</strong>
-              <div className="text-slate-400 mt-0.5">
-                If Arduino Serial Monitor or another window opened the port, click &quot;RELEASE LOCKS&quot; below.
-              </div>
-            </div>
-          </div>
-
-          {/* 4 Interactive One-Click Recovery Buttons */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => handlePulse('PULSE DTR', pulseDTR)}
-              className="px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded font-bold text-xs flex items-center justify-center gap-1.5 shadow-[0_0_10px_rgba(6,182,212,0.3)] transition-all"
-            >
-              <Zap className="w-4 h-4 text-cyan-200" />
-              <span>1. PULSE DTR (WAKE CDC)</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handlePulse('REBOOT ESP32', rebootESP32)}
-              className="px-3 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold rounded text-xs flex items-center justify-center gap-1.5 shadow-[0_0_10px_rgba(245,158,11,0.3)] transition-all"
-            >
-              <Power className="w-4 h-4 text-slate-950" />
-              <span>2. REBOOT ESP32 (EN PIN)</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handlePulse('RELEASED LOCKS', forceResetSerial)}
-              className="px-3 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded text-xs flex items-center justify-center gap-1.5 shadow-[0_0_10px_rgba(225,29,72,0.3)] transition-all"
-            >
-              <RefreshCw className="w-4 h-4 text-rose-200" />
-              <span>3. RELEASE LOCKS & RESET</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handlePulse('TEST PACKET INJECTED', injectTestPacket)}
-              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded text-xs flex items-center justify-center gap-1.5 shadow-[0_0_10px_rgba(16,185,129,0.3)] transition-all"
-            >
-              <Activity className="w-4 h-4 text-emerald-200" />
-              <span>4. TEST PACKET (VERIFY ZYRO)</span>
-            </button>
-          </div>
+          <span className="text-[10px] text-emerald-400/80">Command dispatched to serial port</span>
         </div>
       )}
 
-      {/* Iframe Warning Banner (if running in embedded iframe) */}
-      {isIframe && (
-        <div className="bg-amber-950/50 border border-amber-500/40 rounded-lg p-3 text-xs font-mono text-amber-200 flex flex-wrap items-center justify-between gap-3">
+      {/* WHY IS MY ESP32 TYPE B NOT CONNECTING OR NOT SHOWING? (Diagnostic Accordion) */}
+      <div className="bg-slate-950/80 border border-cyan-500/30 rounded-xl overflow-hidden shadow-inner">
+        <button
+          type="button"
+          onClick={() => setShowTroubleshootingGuide(!showTroubleshootingGuide)}
+          className="w-full px-4 py-2.5 bg-gradient-to-r from-slate-900 via-cyan-950/40 to-slate-900 flex items-center justify-between text-left border-b border-cyan-500/20 hover:bg-slate-800/80 transition-colors"
+        >
           <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>
-              <strong>EMBEDDED IFRAME DETECTED:</strong> Browsers (Chrome/Edge) may restrict direct USB Serial communication inside embedded frames. Open the dashboard in a direct window for full hardware access.
+            <HelpCircle className="w-4 h-4 text-cyan-400" />
+            <span className="text-xs font-bold text-cyan-200 uppercase tracking-wide">
+              WHY IS MY ESP32 TYPE B NOT CONNECTING OR NOT SHOWING IN SERIAL PORT?
+            </span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              TOP 5 FIXES
+            </span>
+          </div>
+          {showTroubleshootingGuide ? (
+            <ChevronUp className="w-4 h-4 text-cyan-400" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-cyan-400" />
+          )}
+        </button>
+
+        {showTroubleshootingGuide && (
+          <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+            {/* Fix 1: Micro-USB Cable Data vs Power */}
+            <div className="bg-[#070e1c] p-3 rounded-lg border border-amber-500/30 flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 text-amber-300 font-bold">
+                <Cable className="w-4 h-4 text-amber-400" />
+                <span>1. CHARGE-ONLY CABLE (MOST COMMON)</span>
+              </div>
+              <p className="text-slate-300 text-[11px] leading-relaxed">
+                Over 60% of Micro-USB cables are <strong>power-only</strong> charging cables (they only have 2 wires for VBUS & GND, and lack the <strong>D+ and D-</strong> data lines).
+              </p>
+              <div className="bg-amber-950/40 p-2 rounded text-[10px] text-amber-200 border border-amber-500/20 mt-auto">
+                <strong>Test:</strong> When you plug in the ESP32, does your PC make a USB connection sound? If not, switch to a true 4-wire sync/data Micro-USB cable.
+              </div>
+            </div>
+
+            {/* Fix 2: Driver (CH340 or CP2102) */}
+            <div className="bg-[#070e1c] p-3 rounded-lg border border-cyan-500/30 flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 text-cyan-300 font-bold">
+                <Cpu className="w-4 h-4 text-cyan-400" />
+                <span>2. MISSING CH340 / CP2102 DRIVER</span>
+              </div>
+              <p className="text-slate-300 text-[11px] leading-relaxed">
+                ESP32 Type-B boards have an external USB-to-UART chip (usually <strong>CH340G</strong> or <strong>CP2102</strong>). Windows 10/11 does not always include the CH340 driver by default.
+              </p>
+              <div className="bg-cyan-950/40 p-2 rounded text-[10px] text-cyan-200 border border-cyan-500/20 mt-auto">
+                <strong>Fix:</strong> Open <em>Windows Device Manager</em>. If you see &quot;USB-Serial&quot; with a yellow exclamation mark, install the <strong>CH341SER.EXE</strong> or <strong>CP210x VCP</strong> driver.
+              </div>
+            </div>
+
+            {/* Fix 3: DTR/RTS Reset Line Lock */}
+            <div className="bg-[#070e1c] p-3 rounded-lg border border-purple-500/30 flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 text-purple-300 font-bold">
+                <Power className="w-4 h-4 text-purple-400" />
+                <span>3. AUTO-RESET HELD IN RESET</span>
+              </div>
+              <p className="text-slate-300 text-[11px] leading-relaxed">
+                Standard ESP32 Type-B boards have a transistor reset circuit. If DTR and RTS are asserted High, the board is held in <strong>RESET</strong> and never boots.
+              </p>
+              <div className="bg-purple-950/40 p-2 rounded text-[10px] text-purple-200 border border-purple-500/20 mt-auto">
+                <strong>Resolved:</strong> In our new Type-B mode, DTR/RTS are released to <strong>LOW (0,0)</strong> so EN stays HIGH and firmware runs freely. Click &quot;UNSTICK TYPE-B&quot; below if needed!
+              </div>
+            </div>
+
+            {/* Fix 4: Port Exclusive Lock */}
+            <div className="bg-[#070e1c] p-3 rounded-lg border border-rose-500/30 flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 text-rose-300 font-bold">
+                <RefreshCw className="w-4 h-4 text-rose-400" />
+                <span>4. ARDUINO IDE / TERMINAL PORT LOCK</span>
+              </div>
+              <p className="text-slate-300 text-[11px] leading-relaxed">
+                On Windows, serial COM ports have an <strong>exclusive lock</strong>. If Arduino IDE Serial Monitor, PlatformIO, or another terminal is open, the browser cannot open the port.
+              </p>
+              <div className="bg-rose-950/40 p-2 rounded text-[10px] text-rose-200 border border-rose-500/20 mt-auto">
+                <strong>Fix:</strong> Close Arduino Serial Monitor. Then click &quot;RELEASE LOCKS & RESET&quot; below to clear browser stream locks.
+              </div>
+            </div>
+
+            {/* Fix 5: Web Serial in Iframe */}
+            <div className="bg-[#070e1c] p-3 rounded-lg border border-emerald-500/30 flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 text-emerald-300 font-bold">
+                <ExternalLink className="w-4 h-4 text-emerald-400" />
+                <span>5. BROWSER PREVIEW IFRAME POLICY</span>
+              </div>
+              <p className="text-slate-300 text-[11px] leading-relaxed">
+                In Web Studio previews, iframes block the browser hardware popup dialog with a <code>SecurityError</code> unless launched in a dedicated top-level window.
+              </p>
+              <div className="bg-emerald-950/40 p-2 rounded text-[10px] text-emerald-200 border border-emerald-500/20 mt-auto flex items-center justify-between">
+                <span>Click &quot;DIRECT WINDOW (USB)&quot;</span>
+                <button
+                  type="button"
+                  onClick={openDirectWindow}
+                  className="px-2 py-0.5 bg-emerald-500 text-slate-950 font-bold rounded text-[10px]"
+                >
+                  OPEN
+                </button>
+              </div>
+            </div>
+
+            {/* Fix 6: Node.js WebSocket Bridge Fallback */}
+            <div className="bg-[#070e1c] p-3 rounded-lg border border-blue-500/30 flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 text-blue-300 font-bold">
+                <Terminal className="w-4 h-4 text-blue-400" />
+                <span>6. LOCAL BRIDGE.JS ALTERNATIVE</span>
+              </div>
+              <p className="text-slate-300 text-[11px] leading-relaxed">
+                If Web Serial is unavailable, run the included bridge on your laptop:
+                <code className="block bg-slate-950 p-1 rounded text-cyan-300 my-1 font-mono text-[10px]">
+                  node bridge.js COM3 115200
+                </code>
+                Dashboard connects automatically via <code>ws://localhost:8081</code>.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* REAL HARDWARE TESTBENCH CONTROLS (Disarms Demo, Pure Real Data) */}
+      <div className="bg-gradient-to-r from-[#0d1830] via-[#091122] to-[#0d1830] border-2 border-cyan-500/40 rounded-xl p-3.5 shadow-lg flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-cyan-500/20">
+          <div className="flex items-center gap-2">
+            <Radio className="w-4 h-4 text-cyan-400 animate-pulse" />
+            <span className="text-xs font-bold text-white uppercase tracking-wider">
+              REAL HARDWARE TESTBENCH CONTROLS (TEST INPUT DATA, NOT DEMO)
             </span>
           </div>
 
-          <button
-            type="button"
-            onClick={openDirectWindow}
-            className="flex items-center gap-1.5 px-3 py-1 bg-amber-500 text-slate-950 font-bold rounded hover:bg-amber-400 transition-colors shrink-0 shadow-[0_0_10px_rgba(245,158,11,0.4)]"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            <span>OPEN IN DIRECT WINDOW</span>
-          </button>
-        </div>
-      )}
-
-      {/* Error message banner if any */}
-      {connectionError && (
-        <div className="bg-rose-950/60 border border-rose-500/50 rounded-lg p-3 text-xs font-mono text-rose-200 flex items-start gap-2">
-          <XCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-          <div className="flex-1 flex items-center justify-between">
-            <div>
-              <div className="font-bold text-rose-300">Connection Notice:</div>
-              <div>{connectionError}</div>
-            </div>
-            {forceResetSerial && (
+          <div className="flex items-center gap-2">
+            {armRealHardwareMode && (
               <button
                 type="button"
-                onClick={forceResetSerial}
-                className="ml-3 px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded text-[11px] shrink-0"
+                onClick={() => handleAction('DEMO DISARMED (LIVE HW ARMED)', armRealHardwareMode)}
+                className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded shadow transition-all flex items-center gap-1.5"
+                title="Stops all simulation loops, clears fake numbers and awaits real packets from ESP32"
               >
-                CLEAR & RESET PORT
+                <Zap className="w-3.5 h-3.5 text-slate-950" />
+                <span>DISARM DEMO & WAIT FOR ESP32</span>
               </button>
             )}
           </div>
         </div>
-      )}
 
-      {/* 4-Step Hardware Connection Checklist */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5 text-xs font-mono">
-        <div className="bg-[#070e1c] p-2.5 rounded border border-cyan-500/10">
-          <div className="text-cyan-400 font-bold mb-1">1. USB CABLE</div>
-          <p className="text-slate-400 text-[11px] leading-relaxed">
-            Ensure your Type-C cable supports <strong>data transfer</strong>, not power-only charging.
-          </p>
-        </div>
-
-        <div className="bg-[#070e1c] p-2.5 rounded border border-cyan-500/10">
-          <div className="text-cyan-400 font-bold mb-1">2. USB-UART DRIVER</div>
-          <p className="text-slate-400 text-[11px] leading-relaxed">
-            CP210x, CH340, or native ESP32-S3 CDC driver installed in Windows Device Manager / macOS.
-          </p>
-        </div>
-
-        <div className="bg-[#070e1c] p-2.5 rounded border border-cyan-500/10">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-cyan-400 font-bold">3. BAUD RATE</span>
-            {setBaudRate && (
-              <span className="text-[10px] text-slate-400">Quick Switch:</span>
-            )}
-          </div>
-          <div className="text-slate-300 text-[11px]">
-            Current: <strong className="text-cyan-300">{baudRate} baud</strong>
-          </div>
-          {setBaudRate && (
-            <div className="flex gap-1.5 mt-1.5">
-              {[115200, 9600, 57600].map((b) => (
-                <button
-                  key={b}
-                  type="button"
-                  onClick={() => setBaudRate(b)}
-                  className={`px-1.5 py-0.5 rounded text-[10px] ${
-                    baudRate === b
-                      ? 'bg-cyan-500 text-slate-950 font-bold'
-                      : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {b}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="bg-[#070e1c] p-2.5 rounded border border-cyan-500/10">
-          <div className="text-cyan-400 font-bold mb-1">4. COM PORT ACCESS</div>
-          <p className="text-slate-400 text-[11px] leading-relaxed">
-            Close Arduino Serial Monitor or PuTTY so the port is not locked by another app.
-          </p>
-        </div>
-      </div>
-
-      {/* Live Hardware Telemetry Diagnostic Counters */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-[#070e1c] p-3 rounded-lg border border-cyan-500/20 text-xs font-mono">
-        {/* Raw Bytes & Packets */}
-        <div>
-          <span className="text-[10px] text-slate-400 block uppercase">DATA FLOW COUNTERS</span>
-          <div className="text-slate-200 mt-1">
-            Raw Bytes: <strong className="text-cyan-300">{rawBytesCount.toLocaleString()} bytes</strong>
-          </div>
-          <div className="text-slate-200 mt-0.5">
-            Valid JSON Packets: <strong className="text-emerald-400">{validPacketCount.toLocaleString()} PKT</strong>
-          </div>
-          {rawBytesCount > 0 && validPacketCount === 0 && (
-            <div className="text-amber-400 text-[10px] mt-1 font-semibold">
-              Bytes received but no packets parsed! Check baud rate (115200 vs 9600).
-            </div>
-          )}
-        </div>
-
-        {/* Gyro Real-Time Verification */}
-        <div>
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-slate-400 uppercase">GYROSCOPE (ZYRO) STATUS</span>
-            <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30">
-              ACTIVE
-            </span>
-          </div>
-          <div className="text-slate-200 mt-1 text-[11px]">
-            Gx: <strong className="text-cyan-300">{currentPacket.gx?.toFixed(2)}°/s</strong> | Gy: <strong className="text-blue-300">{currentPacket.gy?.toFixed(2)}°/s</strong> | Gz: <strong className="text-purple-300">{currentPacket.gz?.toFixed(2)}°/s</strong>
-          </div>
-          <div className="text-slate-300 mt-0.5 text-[11px]">
-            Attitude: <strong className="text-red-400">R:{currentPacket.r?.toFixed(1)}°</strong> <strong className="text-emerald-400">P:{currentPacket.pt?.toFixed(1)}°</strong> <strong className="text-cyan-400">Y:{currentPacket.y?.toFixed(1)}°</strong>
-          </div>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="flex flex-col justify-center gap-1.5">
+        {/* Action Button Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           {connectionState === 'CONNECTED' ? (
             <button
               type="button"
               onClick={disconnectSerial}
-              className="w-full py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded text-xs transition-colors"
+              className="py-2 px-3 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded text-xs transition-colors shadow flex items-center justify-center gap-1.5"
             >
-              DISCONNECT USB PORT
+              <Power className="w-3.5 h-3.5" />
+              <span>DISCONNECT USB</span>
             </button>
           ) : (
             <button
               type="button"
               onClick={connectSerial}
-              className="w-full py-1.5 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded text-xs shadow-[0_0_12px_rgba(34,211,238,0.4)] transition-colors flex items-center justify-center gap-1.5"
+              className="py-2 px-3 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold rounded text-xs shadow-[0_0_15px_rgba(6,182,212,0.5)] transition-all flex items-center justify-center gap-1.5 active:scale-95"
             >
               <Usb className="w-3.5 h-3.5" />
-              <span>CONNECT ESP32 PORT</span>
+              <span>CONNECT SERIAL</span>
             </button>
           )}
 
-          <div className="grid grid-cols-2 gap-1.5">
+          {unstickESP32TypeB && (
             <button
               type="button"
-              onClick={tareZero}
-              className="py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-[11px] border border-slate-600 transition-colors flex items-center justify-center gap-1"
+              onClick={() => handleAction('UNSTICK TYPE-B', unstickESP32TypeB)}
+              className="py-2 px-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded text-xs shadow transition-colors flex items-center justify-center gap-1.5"
+              title="Releases EN pin from reset and locks DTR=0, RTS=0 for CP2102/CH340"
             >
-              <RotateCw className="w-3 h-3 text-cyan-400" />
-              <span>TARE ZERO</span>
+              <ShieldCheck className="w-3.5 h-3.5 text-purple-200" />
+              <span>UNSTICK TYPE-B</span>
             </button>
+          )}
 
-            {forceResetSerial && (
-              <button
-                type="button"
-                onClick={forceResetSerial}
-                className="py-1 bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-rose-200 rounded text-[11px] border border-slate-600 transition-colors flex items-center justify-center gap-1"
-              >
-                <RefreshCw className="w-3 h-3 text-rose-400" />
-                <span>RESET LOCKS</span>
-              </button>
+          {rebootESP32 && (
+            <button
+              type="button"
+              onClick={() => handleAction('REBOOT ESP32', rebootESP32)}
+              className="py-2 px-3 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold rounded text-xs shadow transition-colors flex items-center justify-center gap-1.5"
+              title="Pulses RTS on EN pin to trigger a clean boot"
+            >
+              <Power className="w-3.5 h-3.5" />
+              <span>REBOOT (EN PIN)</span>
+            </button>
+          )}
+
+          {forceResetSerial && (
+            <button
+              type="button"
+              onClick={() => handleAction('RELEASED ALL LOCKS', forceResetSerial)}
+              className="py-2 px-3 bg-slate-800 hover:bg-rose-950 text-slate-200 hover:text-rose-200 border border-slate-700 hover:border-rose-500/50 rounded text-xs transition-colors flex items-center justify-center gap-1.5"
+              title="Clears locked readable streams and re-initializes serial port"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-rose-400" />
+              <span>RELEASE LOCKS</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={tareZero}
+            className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded text-xs transition-colors flex items-center justify-center gap-1.5"
+            title="Zeros out accelerometer and gyro offsets"
+          >
+            <RotateCw className="w-3.5 h-3.5 text-cyan-400" />
+            <span>TARE ZYRO</span>
+          </button>
+
+          {injectTestPacket && (
+            <button
+              type="button"
+              onClick={() => handleAction('TEST PACKET INGESTED', injectTestPacket)}
+              className="py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded text-xs shadow transition-colors flex items-center justify-center gap-1.5"
+              title="Injects a realistic ESP32 Type-B JSON packet into the live pipeline to verify HUD, 3D attitude and graphs"
+            >
+              <Activity className="w-3.5 h-3.5 text-emerald-200" />
+              <span>TEST PACKET</span>
+            </button>
+          )}
+        </div>
+
+        {/* Live Counters & Real-Time Gyro Validation */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-[#060b14] p-3 rounded-lg border border-cyan-500/20 text-xs">
+          {/* Data Flow */}
+          <div>
+            <span className="text-[10px] text-slate-400 uppercase tracking-wider block">
+              REAL DATA FLOW COUNTER
+            </span>
+            <div className="text-slate-200 mt-1">
+              Raw Bytes Arrived: <strong className="text-cyan-300">{rawBytesCount.toLocaleString()} bytes</strong>
+            </div>
+            <div className="text-slate-200 mt-0.5">
+              Parsed Packets: <strong className="text-emerald-400">{validPacketCount.toLocaleString()} PKT</strong>
+            </div>
+            {rawBytesCount > 0 && validPacketCount === 0 && (
+              <div className="text-amber-400 text-[10px] mt-1 font-semibold flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3 shrink-0" />
+                <span>Bytes incoming but no JSON packet parsed! Check baud rate (115200).</span>
+              </div>
+            )}
+          </div>
+
+          {/* Gyro Real-Time Verification */}
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider">
+                GYROSCOPE (ZYRO) ACCURACY
+              </span>
+              <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30">
+                ACTIVE
+              </span>
+            </div>
+            <div className="text-slate-200 mt-1 text-[11px]">
+              Gx: <strong className="text-cyan-300">{currentPacket.gx?.toFixed(2)}°/s</strong> | Gy: <strong className="text-blue-300">{currentPacket.gy?.toFixed(2)}°/s</strong> | Gz: <strong className="text-purple-300">{currentPacket.gz?.toFixed(2)}°/s</strong>
+            </div>
+            <div className="text-slate-300 mt-0.5 text-[11px]">
+              Attitude: <strong className="text-red-400">R:{currentPacket.r?.toFixed(1)}°</strong> <strong className="text-emerald-400">P:{currentPacket.pt?.toFixed(1)}°</strong> <strong className="text-cyan-400">Y:{currentPacket.y?.toFixed(1)}°</strong>
+            </div>
+          </div>
+
+          {/* Baud Rate Quick Selector */}
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider">BAUD RATE CONFIG</span>
+              <span className="text-cyan-300 font-bold">{baudRate} BAUD</span>
+            </div>
+            {setBaudRate && (
+              <div className="flex gap-1.5 mt-2">
+                {[115200, 9600, 57600, 921600].map((b) => (
+                  <button
+                    key={b}
+                    type="button"
+                    onClick={() => setBaudRate(b)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      baudRate === b
+                        ? 'bg-cyan-500 text-slate-950 shadow'
+                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {b}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Embedded Iframe Alert & Direct Window Access */}
+      {isIframe && (
+        <div className="bg-amber-950/40 border border-amber-500/40 rounded-lg p-2.5 text-xs text-amber-200 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              <strong>IFRAME PERMISSION NOTICE:</strong> Chromium blocks USB Serial permission popups inside embedded preview frames. Click <strong>DIRECT WINDOW (USB)</strong> to connect directly.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={openDirectWindow}
+            className="flex items-center gap-1.5 px-3 py-1 bg-amber-500 text-slate-950 font-bold rounded hover:bg-amber-400 transition-colors shadow"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            <span>OPEN DIRECT WINDOW</span>
+          </button>
+        </div>
+      )}
+
+      {/* Connection Error Message Banner */}
+      {connectionError && (
+        <div className="bg-rose-950/60 border border-rose-500/50 rounded-lg p-3 text-xs text-rose-200 flex items-start justify-between gap-2">
+          <div className="flex items-start gap-2">
+            <XCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            <div>
+              <strong className="text-rose-300">Connection Notice:</strong>
+              <div className="mt-0.5">{connectionError}</div>
+            </div>
+          </div>
+          {forceResetSerial && (
+            <button
+              type="button"
+              onClick={forceResetSerial}
+              className="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded text-[11px] shrink-0"
+            >
+              CLEAR & RESET
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 };

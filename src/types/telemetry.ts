@@ -47,6 +47,7 @@ export interface SatelliteInfo {
 
 export type ConnectionState = 'DISCONNECTED' | 'CONNECTED' | 'DEMO' | 'STALE';
 export type ConnectionMode = 'SERIAL' | 'WEBSOCKET' | 'SIM';
+export type BoardType = 'TYPE_B' | 'TYPE_C';
 export type ActiveTab = 'primary' | 'motion' | 'diagnostics' | 'gps' | 'controls';
 
 export const CONFIG = {

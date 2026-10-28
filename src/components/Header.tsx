@@ -26,6 +26,7 @@ interface HeaderProps {
   packetCount: number;
   packetLoss: number;
   bitrateKbps: number;
+  onOpenSpaceIntro?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -36,6 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
   packetCount,
   packetLoss,
   bitrateKbps,
+  onOpenSpaceIntro,
 }) => {
   const [utcTime, setUtcTime] = useState<string>('');
   const [istTime, setIstTime] = useState<string>('');
@@ -193,26 +195,40 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Tab Navigation Pill Bar */}
-      <nav aria-label="Mission Tabs" className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-        {tabs.map((tab) => {
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-1.5 rounded-md font-mono text-[11px] font-semibold tracking-wider whitespace-nowrap transition-all ${
-                isActive
-                  ? 'bg-cyan-400 text-slate-950 shadow-[0_0_12px_rgba(34,211,238,0.4)]'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
-              }`}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
-      </nav>
+      {/* Tab Navigation Pill Bar + 3D Space View trigger */}
+      <div className="flex items-center justify-between gap-2 overflow-x-auto pb-1 scrollbar-none">
+        <nav aria-label="Mission Tabs" className="flex items-center gap-2">
+          {tabs.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-4 py-1.5 rounded-md font-mono text-[11px] font-semibold tracking-wider whitespace-nowrap transition-all ${
+                  isActive
+                    ? 'bg-cyan-400 text-slate-950 shadow-[0_0_12px_rgba(34,211,238,0.4)]'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </nav>
+
+        {onOpenSpaceIntro && (
+          <button
+            type="button"
+            onClick={onOpenSpaceIntro}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-gradient-to-r from-purple-900/80 to-indigo-900/80 hover:from-purple-800 hover:to-indigo-800 border border-purple-400/50 text-purple-200 hover:text-white font-mono text-[11px] font-bold tracking-wider transition-all shadow-[0_0_12px_rgba(168,85,247,0.3)] whitespace-nowrap active:scale-95"
+            title="Open Interactive 3D Spaceflight & CubeSat Digital Twin"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-300 animate-pulse" />
+            <span>3D SPACE VIEW</span>
+          </button>
+        )}
+      </div>
     </header>
   );
 };

@@ -15,9 +15,11 @@ import { MotionAlertTab } from './components/tabs/MotionAlertTab';
 import { DiagnosticsGraphsTab } from './components/tabs/DiagnosticsGraphsTab';
 import { GpsTrackingTab } from './components/tabs/GpsTrackingTab';
 import { MissionControlsTab } from './components/tabs/MissionControlsTab';
+import { SpaceIntro3D } from './components/SpaceIntro3D';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('primary');
+  const [showSpaceIntro, setShowSpaceIntro] = useState<boolean>(true);
 
   const {
     connectionMode,
@@ -64,6 +66,22 @@ export default function App() {
     exportCSV,
   } = useTelemetry();
 
+  // If user is in the interactive 3D space-themed opening screen
+  if (showSpaceIntro) {
+    return (
+      <SpaceIntro3D
+        onEnterHUD={() => {
+          setShowSpaceIntro(false);
+          setActiveTab('primary');
+        }}
+        connectionState={connectionState}
+        connectionMode={connectionMode}
+        onConnectSerial={connectSerial}
+        onToggleDemo={toggleDemoMode}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#060b14] text-slate-100 flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
       {/* Top Header & Tab Navigation */}
@@ -75,6 +93,7 @@ export default function App() {
         packetCount={packetCount}
         packetLoss={packetLoss}
         bitrateKbps={bitrateKbps}
+        onOpenSpaceIntro={() => setShowSpaceIntro(true)}
       />
 
       {/* Top Telemetry Status Strip */}

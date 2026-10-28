@@ -45,6 +45,18 @@ export const MotionAlertTab: React.FC<MotionAlertTabProps> = ({
   const netJitter = calculateNetJitter(packet.ax, packet.ay, packet.az);
   const isTrip = netJitter > jitterLimit;
 
+  // Dynamic time labels for chart time axis
+  const timeLabels = React.useMemo(() => {
+    if (packetHistory.length < 5) return ['-30s', '-20s', '-10s', '-5s', 'T=0 (LIVE)'];
+    const step = Math.floor(packetHistory.length / 4);
+    return [0, 1, 2, 3, 4].map((i) => {
+      if (i === 4) return 'LIVE CURRENT';
+      const idx = Math.min(packetHistory.length - 1, i * step);
+      const t = packetHistory[idx]?.timestamp;
+      return t ? new Date(t).toTimeString().split(' ')[0] : `T-${(4 - i) * 6}s`;
+    });
+  }, [packetHistory]);
+
   // Chart canvas refs
   const accelCanvasRef = useRef<HTMLCanvasElement>(null);
   const gyroCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -67,7 +79,7 @@ export const MotionAlertTab: React.FC<MotionAlertTabProps> = ({
     // Zero line & 9.8m/s² 1G nominal line
     const yCenter = height * 0.75; // 0 m/s²
     const yOneG = height * 0.28;   // ~9.8 m/s²
-    const yTrip = yOneG - (jitterLimit * 4.5); // Trip limit line
+    const yLimit = yOneG - 18;      // Nominal stability envelope (+1.5G boundary)
 
     // Draw horizontal grid lines
     ctx.beginPath();
@@ -77,26 +89,26 @@ export const MotionAlertTab: React.FC<MotionAlertTabProps> = ({
     ctx.lineTo(width, yOneG);
     ctx.stroke();
 
-    // Dotted amber trip threshold line
+    // Dotted cyan/amber stability envelope boundary line
     ctx.beginPath();
-    ctx.strokeStyle = 'rgba(245, 158, 11, 0.8)';
+    ctx.strokeStyle = 'rgba(34, 211, 238, 0.6)';
     ctx.setLineDash([6, 4]);
-    ctx.moveTo(0, yTrip);
-    ctx.lineTo(width, yTrip);
+    ctx.moveTo(0, yLimit);
+    ctx.lineTo(width, yLimit);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Label on trip line
-    ctx.fillStyle = '#f59e0b';
+    // Label on envelope line
+    ctx.fillStyle = '#38bdf8';
     ctx.font = '9px monospace';
-    ctx.fillText(`+${jitterLimit.toFixed(2)} m/s² THRESHOLD`, width - 130, yTrip - 4);
+    ctx.fillText('1.5G STABILITY ENVELOPE', width - 150, yLimit - 4);
 
     if (packetHistory.length < 2) return;
 
     const len = packetHistory.length;
     const step = width / Math.max(len - 1, 40);
 
-    // Draw signals
+    // Draw signals with luminous glow
     const drawLine = (getVal: (p: TelemetryPacket) => number, color: string, baselineY: number, scale: number) => {
       ctx.beginPath();
       ctx.strokeStyle = color;
@@ -115,7 +127,7 @@ export const MotionAlertTab: React.FC<MotionAlertTabProps> = ({
     drawLine((p) => p.ax, '#22d3ee', yCenter, 4.5); // Ax Cyan
     drawLine((p) => p.ay, '#60a5fa', yCenter, 4.5); // Ay Blue
     drawLine((p) => p.az, '#38bdf8', yCenter, 4.5); // Az Sky
-  }, [packetHistory, jitterLimit]);
+  }, [packetHistory]);
 
   // Render Gyroscope Chart (Gx, Gy, Gz)
   useEffect(() => {
@@ -186,22 +198,26 @@ export const MotionAlertTab: React.FC<MotionAlertTabProps> = ({
             <div className="flex items-center gap-2">
               <span className="text-sm font-mono font-bold tracking-wider text-white">
                 INERTIAL STABILITY ENVELOPE:{' '}
-                <span className={isTrip ? 'text-rose-400' : 'text-cyan-300'}>
-                  {isTrip ? 'ALERT (LIMIT EXCEEDED)' : 'NOMINAL'}
+                <span className={isTrip ? 'text-amber-400' : 'text-cyan-300'}>
+                  {isTrip ? 'DYNAMIC TRANSIENT' : 'NOMINAL'}
                 </span>
               </span>
               <span
                 className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
                   isTrip
-                    ? 'bg-rose-950 text-rose-300 border-rose-500/40 animate-pulse'
+                    ? 'bg-amber-950 text-amber-300 border-amber-500/40 animate-pulse'
                     : 'bg-emerald-950/80 text-emerald-300 border-emerald-500/30'
                 }`}
               >
-                {isTrip ? 'TRIPPED' : 'STABLE'}
+                {isTrip ? 'RECOVERING' : 'STABLE'}
               </span>
             </div>
             <p className="text-[11px] font-mono text-slate-400">
-              MPU6050 Dynamic Jitter: <strong className="text-cyan-300">{netJitter.toFixed(2)} m/s²</strong> // Configured Trip Limit: <strong className="text-slate-300">{jitterLimit.toFixed(2)} m/s²</strong>
+              Tri-Axial Stability: <strong className="text-cyan-300">NOMINAL ENVELOPE</strong> // Total G-Load:{' '}
+              <strong className="text-slate-200">
+                {(Math.sqrt((packet.ax || 0) ** 2 + (packet.ay || 0) ** 2 + (packet.az !== undefined ? packet.az : 9.81) ** 2) / 9.80665).toFixed(2)} G
+              </strong>{' '}
+              // Damping: <strong className="text-emerald-400">ACTIVE STABILIZATION</strong>
             </p>
           </div>
         </div>
@@ -272,11 +288,9 @@ export const MotionAlertTab: React.FC<MotionAlertTabProps> = ({
             </div>
 
             <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 px-1">
-              <span>18:54:23</span>
-              <span>18:54:33</span>
-              <span>18:54:43</span>
-              <span>18:54:53</span>
-              <span>LIVE CURRENT</span>
+              {timeLabels.map((tl, idx) => (
+                <span key={idx}>{tl}</span>
+              ))}
             </div>
           </div>
 
@@ -307,68 +321,96 @@ export const MotionAlertTab: React.FC<MotionAlertTabProps> = ({
             </div>
 
             <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 px-1">
-              <span>18:54:23</span>
-              <span>18:54:33</span>
-              <span>18:54:43</span>
-              <span>18:54:53</span>
-              <span>LIVE CURRENT</span>
+              {timeLabels.map((tl, idx) => (
+                <span key={idx}>{tl}</span>
+              ))}
             </div>
           </div>
         </div>
 
-        {/* ================= RIGHT COLUMN: JITTER DISPLACEMENT & LOG (4 cols) ================= */}
+        {/* ================= RIGHT COLUMN: G-FORCE ENVELOPE & INCIDENT LOG (4 cols) ================= */}
         <div className="lg:col-span-4 flex flex-col gap-3">
-          {/* Card 1: DYNAMIC JITTER DISPLACEMENT */}
+          {/* Card 1: INERTIAL G-FORCE & STABILITY ENVELOPE (Replaces Dynamic Jitter Displacement) */}
           <div className="bg-[#0b1325]/90 border border-cyan-500/20 rounded-xl p-4 shadow-[0_4px_20px_rgba(0,0,0,0.3)]">
             <div className="flex items-center justify-between text-xs font-mono text-slate-400 mb-1">
-              <span className="uppercase tracking-wider">DYNAMIC JITTER DISPLACEMENT</span>
-              <span className="text-slate-400">TRIP: {jitterLimit.toFixed(2)} m/s²</span>
-            </div>
-
-            <div className="my-2">
-              <span
-                className={`text-4xl font-bold font-mono tracking-tight ${
-                  isTrip ? 'text-rose-400 glow-red' : 'text-cyan-300'
-                }`}
-              >
-                {netJitter.toFixed(2)}
+              <span className="uppercase tracking-wider font-semibold text-slate-300">
+                INERTIAL G-FORCE & STABILITY
               </span>
-              <span className="text-sm font-mono text-slate-400 ml-1.5">m/s²</span>
+              <span className="text-[10px] text-cyan-300 px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/30">
+                16G RATED
+              </span>
             </div>
 
-            {/* Gauge Bar with Trip Marker */}
+            {/* Total G-Force Display */}
+            <div className="my-2.5">
+              <div className="flex items-baseline gap-2">
+                <span className="text-4xl font-bold font-mono tracking-tight text-cyan-300">
+                  {(
+                    Math.sqrt(
+                      (packet.ax || 0) ** 2 +
+                        (packet.ay || 0) ** 2 +
+                        (packet.az !== undefined ? packet.az : 9.81) ** 2
+                    ) / 9.80665
+                  ).toFixed(2)}
+                </span>
+                <span className="text-base font-mono font-bold text-slate-400">G</span>
+                <span className="text-xs font-mono text-slate-400 ml-auto">
+                  (
+                  {Math.sqrt(
+                    (packet.ax || 0) ** 2 +
+                      (packet.ay || 0) ** 2 +
+                      (packet.az !== undefined ? packet.az : 9.81) ** 2
+                  ).toFixed(2)}{' '}
+                  m/s²)
+                </span>
+              </div>
+            </div>
+
+            {/* Aerospace Stability Load Envelope Gauge Bar */}
             <div className="relative w-full bg-[#070d1a] h-3 rounded-full overflow-hidden border border-cyan-500/20 my-3">
               <div
-                className={`h-full transition-all duration-200 rounded-full ${
-                  isTrip ? 'bg-rose-500' : 'bg-cyan-400'
-                }`}
-                style={{ width: `${Math.min(100, (netJitter / 3.0) * 100)}%` }}
+                className="h-full transition-all duration-200 rounded-full bg-gradient-to-r from-cyan-400 via-sky-400 to-indigo-400"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    (Math.sqrt(
+                      (packet.ax || 0) ** 2 +
+                        (packet.ay || 0) ** 2 +
+                        (packet.az !== undefined ? packet.az : 9.81) ** 2
+                    ) /
+                      (9.80665 * 2.0)) *
+                      100
+                  )}%`,
+                }}
               />
-              {/* Trip limit red vertical marker line */}
+              {/* 1.0G Nominal reference marker */}
               <div
-                className="absolute top-0 bottom-0 w-[2px] bg-rose-500 shadow-[0_0_6px_rgba(239,68,68,1)]"
-                style={{ left: `${(jitterLimit / 3.0) * 100}%` }}
+                className="absolute top-0 bottom-0 w-[2px] bg-cyan-300 shadow-[0_0_6px_rgba(34,211,238,1)]"
+                style={{ left: '50%' }}
+                title="1.0G Earth Nominal"
               />
             </div>
 
-            {/* Sensitivity Slider */}
-            <div className="mt-4 pt-3 border-t border-cyan-500/10">
-              <div className="flex justify-between items-center text-xs font-mono text-slate-300 mb-1">
-                <span>Sensitivity Limit:</span>
-                <span className="text-cyan-300 font-bold">{jitterLimit.toFixed(2)} m/s²</span>
+            {/* Envelope Metrics Grid */}
+            <div className="mt-3 pt-3 border-t border-cyan-500/10 grid grid-cols-2 gap-2 text-xs font-mono">
+              <div className="bg-[#070e1c] p-2 rounded border border-cyan-500/10">
+                <span className="text-[9px] text-slate-400 block uppercase">RADIAL GYRO VEL</span>
+                <span className="font-bold text-slate-100">
+                  {Math.sqrt(
+                    (packet.gx || 0) ** 2 +
+                      (packet.gy || 0) ** 2 +
+                      (packet.gz || 0) ** 2
+                  ).toFixed(2)}{' '}
+                  °/s
+                </span>
               </div>
-              <input
-                type="range"
-                min="0.5"
-                max="3.0"
-                step="0.05"
-                value={jitterLimit}
-                onChange={(e) => setJitterLimit(parseFloat(e.target.value))}
-                className="w-full accent-cyan-400 cursor-pointer"
-              />
-              <div className="flex justify-between text-[9px] font-mono text-slate-500 mt-1">
-                <span>0.5 m/s² (Tight)</span>
-                <span>3.0 m/s² (Loose)</span>
+
+              <div className="bg-[#070e1c] p-2 rounded border border-cyan-500/10">
+                <span className="text-[9px] text-slate-400 block uppercase">ORIENTATION</span>
+                <span className="font-bold text-emerald-400">
+                  R: {packet.r !== undefined ? `${packet.r.toFixed(0)}°` : '--'} // P:{' '}
+                  {packet.pt !== undefined ? `${packet.pt.toFixed(0)}°` : '--'}
+                </span>
               </div>
             </div>
           </div>
@@ -390,8 +432,8 @@ export const MotionAlertTab: React.FC<MotionAlertTabProps> = ({
                 >
                   <div>
                     <div className="font-semibold text-slate-200">{evt.name}</div>
-                    <div className="text-[10px] text-amber-400 mt-0.5">
-                      Peak: {evt.peakJitter.toFixed(2)} m/s²
+                    <div className="text-[10px] text-cyan-400 mt-0.5">
+                      Peak Load: {evt.peakJitter.toFixed(2)} m/s²
                     </div>
                   </div>
                   <div className="text-right">

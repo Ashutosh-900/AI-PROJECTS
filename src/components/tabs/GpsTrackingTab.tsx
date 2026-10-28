@@ -409,8 +409,8 @@ export const GpsTrackingTab: React.FC<GpsTrackingTabProps> = ({
                 <span className="text-[9px] text-slate-400 block uppercase">LATITUDE (GORAKHPUR)</span>
                 <span className="text-sm font-bold text-slate-100">
                   {coordFormat === 'DECIMAL'
-                    ? `${packet.lat !== undefined ? packet.lat.toFixed(5) : '--'}° N`
-                    : toDMS(packet.lat ?? gsLat, true)}
+                    ? (packet.lat !== undefined ? `${packet.lat.toFixed(5)}° N` : '--')
+                    : (packet.lat !== undefined ? toDMS(packet.lat, true) : '--')}
                 </span>
               </div>
 
@@ -418,8 +418,8 @@ export const GpsTrackingTab: React.FC<GpsTrackingTabProps> = ({
                 <span className="text-[9px] text-slate-400 block uppercase">LONGITUDE (GORAKHPUR)</span>
                 <span className="text-sm font-bold text-slate-100">
                   {coordFormat === 'DECIMAL'
-                    ? `${packet.lon !== undefined ? packet.lon.toFixed(5) : '--'}° E`
-                    : toDMS(packet.lon ?? gsLon, false)}
+                    ? (packet.lon !== undefined ? `${packet.lon.toFixed(5)}° E` : '--')
+                    : (packet.lon !== undefined ? toDMS(packet.lon, false) : '--')}
                 </span>
               </div>
 

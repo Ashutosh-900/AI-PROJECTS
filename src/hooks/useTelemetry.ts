@@ -11,6 +11,7 @@ import {
   SatelliteInfo,
   ConnectionState,
   ConnectionMode,
+  BoardType,
   CONFIG,
 } from '../types/telemetry';
 import {
@@ -29,6 +30,7 @@ export interface SerialLogEntry {
 
 export function useTelemetry() {
   // Connection states
+  const [boardType, setBoardType] = useState<BoardType>('TYPE_B');
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>('SIM');
   const [connectionState, setConnectionState] = useState<ConnectionState>('DEMO');
   const [baudRate, setBaudRate] = useState<number>(CONFIG.DEFAULT_BAUD);
@@ -130,6 +132,7 @@ export function useTelemetry() {
   const firstPacketIdRef = useRef<number>(4800);
   const lastPacketIdRef = useRef<number>(4895);
   const totalReceivedRef = useRef<number>(4946);
+  const isFirstLivePacketRef = useRef<boolean>(true);
   const jitterDisturbanceTimerRef = useRef<any>(null);
 
   // Sim impulse state
@@ -184,7 +187,7 @@ export function useTelemetry() {
 
         // Attitude calculation:
         // 1. If ESP32 provided roll/pitch/yaw, use them directly.
-        // 2. If not provided or zero, compute via complementary filter from gyro + accelerometer
+        // 2. If not provided or NaN, compute via complementary filter from gyro + accelerometer
         let finalRoll = packet.r;
         let finalPitch = packet.pt;
         let finalYaw = packet.y;
@@ -206,12 +209,15 @@ export function useTelemetry() {
           finalYaw = Number(updatedYaw.toFixed(1));
         }
 
+        // Keep raw sensor altitude in packet.alt (MSL)
+        const rawAlt = packet.alt !== undefined ? packet.alt : prev.alt;
+
         const full: TelemetryPacket = {
           id: packet.id ?? prev.id + 1,
           t: packet.t ?? prev.t,
           h: packet.h ?? prev.h,
           p: packet.p ?? prev.p,
-          alt: packet.alt !== undefined ? Number((packet.alt - groundBaselineAlt).toFixed(1)) : prev.alt,
+          alt: rawAlt,
           ax: correctedAx,
           ay: correctedAy,
           az: correctedAz,
@@ -229,15 +235,16 @@ export function useTelemetry() {
           timestamp: now,
         };
 
-        // Update vertical speed
+        // Update vertical speed from barometric altitude rate of change
         if (dt > 0.05 && packet.alt !== undefined) {
           const vs = (full.alt - prev.alt) / dt;
           setVerticalSpeed(Number(vs.toFixed(1)));
         }
 
-        // Update Max Apogee
-        if (full.alt > maxApogee) {
-          setMaxApogee(full.alt);
+        // Update Max Apogee (computed relative to ground baseline)
+        const currentAgl = full.alt - groundBaselineAlt;
+        if (currentAgl > maxApogee) {
+          setMaxApogee(Number(currentAgl.toFixed(1)));
         }
 
         // Update packet history buffer
@@ -276,16 +283,35 @@ export function useTelemetry() {
         return full;
       });
 
-      // Update counters
-      totalReceivedRef.current += 1;
-      setPacketCount(totalReceivedRef.current);
-      if (packet.id) {
-        lastPacketIdRef.current = Math.max(lastPacketIdRef.current, packet.id);
-        const loss = calculatePacketLoss(totalReceivedRef.current, lastPacketIdRef.current, firstPacketIdRef.current);
-        setPacketLoss(loss);
+      // Update counters with support for live hardware packet start
+      if (connectionMode !== 'SIM') {
+        if (isFirstLivePacketRef.current) {
+          isFirstLivePacketRef.current = false;
+          firstPacketIdRef.current = packet.id ?? 1;
+          lastPacketIdRef.current = packet.id ?? 1;
+          totalReceivedRef.current = 1;
+          setPacketCount(1);
+          setPacketLoss(0.00);
+        } else {
+          totalReceivedRef.current += 1;
+          setPacketCount(totalReceivedRef.current);
+          if (packet.id !== undefined) {
+            lastPacketIdRef.current = Math.max(lastPacketIdRef.current, packet.id);
+            const loss = calculatePacketLoss(totalReceivedRef.current, lastPacketIdRef.current, firstPacketIdRef.current);
+            setPacketLoss(loss);
+          }
+        }
+      } else {
+        totalReceivedRef.current += 1;
+        setPacketCount(totalReceivedRef.current);
+        if (packet.id !== undefined) {
+          lastPacketIdRef.current = Math.max(lastPacketIdRef.current, packet.id);
+          const loss = calculatePacketLoss(totalReceivedRef.current, lastPacketIdRef.current, firstPacketIdRef.current);
+          setPacketLoss(loss);
+        }
       }
     },
-    [isPaused, groundBaselineAlt, accelOffset, gyroOffset, maxApogee, jitterLimit, addLog]
+    [isPaused, groundBaselineAlt, accelOffset, gyroOffset, maxApogee, jitterLimit, addLog, connectionMode]
   );
 
   // Mission Elapsed Time timer
@@ -430,12 +456,29 @@ export function useTelemetry() {
         serialPortRef.current = null;
       }
 
-      addLog('SYS', `Requesting USB Serial Port at ${baudRate} baud...`);
-      const port = await (navigator as any).serial.requestPort();
+      addLog('SYS', `Requesting USB Serial Port for ESP32 ${boardType === 'TYPE_B' ? 'Type-B (Micro-USB / CH340 / CP2102)' : 'Type-C (Native CDC)'} at ${baudRate} baud...`);
+      
+      let port: any = null;
+      // Auto-reconnect to existing granted port if available
+      if ((navigator as any).serial.getPorts) {
+        const existingPorts = await (navigator as any).serial.getPorts().catch(() => []);
+        if (existingPorts.length === 1 && !serialPortRef.current) {
+          port = existingPorts[0];
+          addLog('SYS', 'Found previously authorized USB Serial port. Connecting directly...');
+        }
+      }
+      if (!port) {
+        // Empty filters ensures all USB-UART bridges (CH340, CP2102, FT232, PL2303, CDC) are visible
+        port = await (navigator as any).serial.requestPort({ filters: [] });
+      }
       serialPortRef.current = port;
 
       try {
-        await port.open({ baudRate });
+        await port.open({
+          baudRate,
+          bufferSize: 16384,
+          flowControl: 'none',
+        });
       } catch (openErr: any) {
         const msg = openErr?.message || String(openErr);
         if (msg.includes('already open')) {
@@ -445,19 +488,32 @@ export function useTelemetry() {
         }
       }
 
-      // Assert DTR / RTS signals (critical for ESP32 Type-C / CDC comms to wake up)
-      try {
-        await port.setSignals({ dataTerminalReady: true, requestToSend: true });
-        addLog('SYS', 'DTR/RTS serial control lines asserted (High).');
-      } catch {
-        // Some USB-UART drivers don't support setSignals, safe to ignore
+      // Configure DTR / RTS lines based on ESP32 board architecture:
+      // - ESP32 Type-B (Micro-USB with CP2102, CH340, FT232):
+      //   Crucial: Setting DTR=false, RTS=false releases the transistor auto-reset circuit,
+      //   leaving EN (Reset) and IO0 (Boot) HIGH so the CPU runs user firmware!
+      // - ESP32 Type-C (Native USB-CDC on S2/S3/C3):
+      //   Asserting DTR=true wakes up the CDC communication endpoint.
+      if (boardType === 'TYPE_B') {
+        try {
+          await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+          addLog('SYS', 'ESP32 Type-B Mode: DTR & RTS lines released LOW. EN pin released, CPU running sketch.');
+        } catch {
+          // Some USB-UART drivers don't implement setSignals, safe to ignore
+        }
+      } else {
+        try {
+          await port.setSignals({ dataTerminalReady: true, requestToSend: true });
+          addLog('SYS', 'ESP32 Type-C CDC Mode: DTR/RTS asserted High.');
+        } catch {}
       }
 
+      isFirstLivePacketRef.current = true;
       setConnectionMode('SERIAL');
       setConnectionState('CONNECTED');
       lastPacketTimeRef.current = Date.now();
-      addLog('SYS', `Serial port opened successfully at ${baudRate} baud (8-N-1).`);
-      addLog('SYS', 'Listening for ESP32 telemetry packets (JSON/CSV/KV)...');
+      addLog('SYS', `Serial port opened successfully at ${baudRate} baud (8-N-1, flowControl: none).`);
+      addLog('SYS', 'Listening for live ESP32 telemetry packets (JSON/CSV/KV)...');
 
       // Setup writer
       const textEncoder = new TextEncoder();
@@ -616,6 +672,7 @@ export function useTelemetry() {
         wsRef.current = ws;
 
         ws.onopen = () => {
+          isFirstLivePacketRef.current = true;
           setConnectionMode('WEBSOCKET');
           setConnectionState('CONNECTED');
           setConnectionError(null);
@@ -699,26 +756,33 @@ export function useTelemetry() {
     [connectionMode, addLog]
   );
 
-  // Calibrate Baro Baseline Ground
+  // Calibrate Baro Baseline Ground (Sets zero AGL reference to current altitude)
   const calibrateBaseline = useCallback(() => {
-    setGroundBaselineAlt(currentPacket.alt + groundBaselineAlt);
-    addLog('SYS', `Calibrated Barometric Ground Baseline to ${currentPacket.alt.toFixed(1)}m AGL`);
-  }, [currentPacket.alt, groundBaselineAlt, addLog]);
+    setGroundBaselineAlt(currentPacket.alt);
+    setMaxApogee(0.0);
+    addLog('SYS', `Calibrated Barometric Ground Baseline to ${currentPacket.alt.toFixed(1)}m MSL (Zero AGL set)`);
+  }, [currentPacket.alt, addLog]);
 
   // Tare Zero Accel & Gyro
   const tareZero = useCallback(() => {
-    setAccelOffset({
-      x: currentPacket.ax,
-      y: currentPacket.ay,
-      z: currentPacket.az - 9.80665,
-    });
-    setGyroOffset({
-      gx: currentPacket.gx,
-      gy: currentPacket.gy,
-      gz: currentPacket.gz,
-    });
+    setAccelOffset((prev) => ({
+      x: prev.x + (currentPacket.ax || 0),
+      y: prev.y + (currentPacket.ay || 0),
+      z: prev.z + ((currentPacket.az !== undefined ? currentPacket.az : 9.80665) - 9.80665),
+    }));
+    setGyroOffset((prev) => ({
+      gx: prev.gx + (currentPacket.gx || 0),
+      gy: prev.gy + (currentPacket.gy || 0),
+      gz: prev.gz + (currentPacket.gz || 0),
+    }));
     setCurrentPacket((p) => ({
       ...p,
+      ax: 0,
+      ay: 0,
+      az: 9.81,
+      gx: 0,
+      gy: 0,
+      gz: 0,
       r: 0,
       pt: 0,
       y: 0,
@@ -750,6 +814,7 @@ export function useTelemetry() {
   // Toggle Demo Mode
   const toggleDemoMode = useCallback(() => {
     if (connectionMode === 'SIM') {
+      isFirstLivePacketRef.current = true;
       setConnectionMode('SERIAL');
       setConnectionState('DISCONNECTED');
       addLog('SYS', 'Switched to LIVE HW Mode (Serial/WS ready)');
@@ -863,6 +928,60 @@ export function useTelemetry() {
     addLog('SYS', 'Serial interface successfully reset. Port locks cleared.');
   }, [addLog]);
 
+  // Unstick / Hardware Run ESP32 Type B (Releases EN reset pin for CP2102/CH340)
+  const unstickESP32TypeB = useCallback(async () => {
+    if (serialPortRef.current) {
+      try {
+        addLog('SYS', 'ESP32 Type-B: Pulsing EN reset line and locking run mode (DTR=0, RTS=0)...');
+        await serialPortRef.current.setSignals({ requestToSend: true, dataTerminalReady: false });
+        await new Promise((r) => setTimeout(r, 120));
+        await serialPortRef.current.setSignals({ requestToSend: false, dataTerminalReady: false });
+        addLog('SYS', 'ESP32 Type-B EN released: CPU is now executing user firmware.');
+      } catch (e: any) {
+        addLog('SYS', `Unstick error: ${e?.message || e}`);
+      }
+    } else {
+      addLog('SYS', 'Notice: No serial port currently open. Click "CONNECT SERIAL PORT" first.');
+    }
+  }, [addLog]);
+
+  // Arm pure Real Hardware Mode (Disarms simulation immediately and resets to waiting state)
+  const armRealHardwareMode = useCallback(() => {
+    setConnectionMode('SERIAL');
+    setConnectionState('DISCONNECTED');
+    setPacketCount(0);
+    setPacketLoss(0.0);
+    setRawBytesCount(0);
+    setValidPacketCount(0);
+    isFirstLivePacketRef.current = true;
+    totalReceivedRef.current = 0;
+    setPacketHistory([]);
+    fullPacketLogRef.current = [];
+    setCurrentPacket({
+      id: 0,
+      t: 0.0,
+      h: 0.0,
+      p: 0.0,
+      alt: 0.0,
+      ax: 0.0,
+      ay: 0.0,
+      az: 9.81,
+      gx: 0.0,
+      gy: 0.0,
+      gz: 0.0,
+      r: 0.0,
+      pt: 0.0,
+      y: 0.0,
+      lat: CONFIG.GS_LAT,
+      lon: CONFIG.GS_LON,
+      galt: CONFIG.GS_ALT,
+      sats: 0,
+      fix: 0,
+      timestamp: Date.now(),
+    });
+    addLog('SYS', 'REAL HARDWARE TESTBENCH ARMED: Demo simulator stopped. Waiting for real ESP32 Type-B packets...');
+  }, [addLog]);
+
   // Inject test packet to verify hardware rendering pipeline
   const injectTestPacket = useCallback(() => {
     const testPacket: TelemetryPacket = {
@@ -893,6 +1012,8 @@ export function useTelemetry() {
   }, [ingestPacket, addLog]);
 
   return {
+    boardType,
+    setBoardType,
     connectionMode,
     connectionState,
     baudRate,
@@ -927,6 +1048,8 @@ export function useTelemetry() {
     forceResetSerial,
     pulseDTR,
     rebootESP32,
+    unstickESP32TypeB,
+    armRealHardwareMode,
     injectTestPacket,
     connectWebSocket,
     sendCommand,

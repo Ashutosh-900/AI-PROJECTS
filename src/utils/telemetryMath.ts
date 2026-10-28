@@ -101,12 +101,12 @@ export function parseTelemetryLine(line: string): Partial<TelemetryPacket> | nul
 function extractFieldsFromObject(data: Record<string, any>): Partial<TelemetryPacket> {
   const num = (keys: string[]): number | undefined => {
     for (const k of keys) {
-      if (typeof data[k] === 'number' && !isNaN(data[k])) {
+      if (typeof data[k] === 'number' && !isNaN(data[k]) && isFinite(data[k])) {
         return data[k];
       }
       if (typeof data[k] === 'string') {
         const parsed = parseFloat(data[k]);
-        if (!isNaN(parsed)) return parsed;
+        if (!isNaN(parsed) && isFinite(parsed)) return parsed;
       }
     }
     return undefined;
@@ -134,24 +134,27 @@ function extractFieldsFromObject(data: Record<string, any>): Partial<TelemetryPa
   const gy = num(['gy', 'gyro_y', 'gyroy', 'gyroY', 'gY', 'zyro_y', 'zyroy', 'zyroY', 'zY', 'wy', 'w_y', 'omega_y']);
   const gz = num(['gz', 'gyro_z', 'gyroz', 'gyroZ', 'gZ', 'zyro_z', 'zyroz', 'zyroZ', 'zZ', 'wz', 'w_z', 'omega_z']);
 
-  // Explicit attitude angles
+  // Explicit attitude angles in degrees
   let r = num(['r', 'roll', 'roll_deg', 'rollDeg', 'phi']);
   let pt = num(['pt', 'pitch', 'pitch_deg', 'pitchDeg', 'theta']);
   let y = num(['y', 'yaw', 'yaw_deg', 'yawDeg', 'psi', 'heading']);
 
-  // If explicit attitude angles not supplied, compute initial tilt from gravity vector
-  if (r === undefined && ay !== undefined && az !== undefined) {
-    r = Number(((Math.atan2(ay, az) * 180) / Math.PI).toFixed(1));
-  }
-  if (pt === undefined && ax !== undefined && ay !== undefined && az !== undefined) {
-    pt = Number(((Math.atan2(-ax, Math.sqrt(ay * ay + az * az)) * 180) / Math.PI).toFixed(1));
-  }
-
-  const lat = num(['lat', 'latitude', 'gps_lat']);
-  const lon = num(['lon', 'lng', 'longitude', 'gps_lon', 'gps_lng']);
+  // GPS coordinates and fix verification
+  let lat = num(['lat', 'latitude', 'gps_lat']);
+  let lon = num(['lon', 'lng', 'longitude', 'gps_lon', 'gps_lng']);
   const galt = num(['galt', 'gps_alt', 'gps_altitude', 'gpsAltitude']);
   const sats = num(['sats', 'sat', 'satellites', 'sats_in_view']) ?? 0;
-  const fix = num(['fix', 'gps_fix', 'status_fix']) ?? (lat !== undefined && lon !== undefined ? 1 : 0);
+  
+  // Guard against GPS (0,0) unacquired lock coordinate
+  const isZeroCoord = (lat === 0 && lon === 0);
+  let fix = num(['fix', 'gps_fix', 'status_fix']);
+  if (fix === undefined) {
+    fix = !isZeroCoord && lat !== undefined && lon !== undefined ? 1 : 0;
+  }
+  if (isZeroCoord && fix === 0) {
+    lat = undefined;
+    lon = undefined;
+  }
 
   const packet: Partial<TelemetryPacket> = {
     id: id !== undefined ? Math.round(id) : undefined,
@@ -181,13 +184,19 @@ function extractFieldsFromObject(data: Record<string, any>): Partial<TelemetryPa
 
 /**
  * Calculates Dew Point in °C using Magnus-Tetens formula.
+ * Handles undefined, NaN, and extreme non-physical values safely.
  */
-export function calculateDewPoint(tempC: number, humPct: number): number {
-  if (tempC === undefined || humPct === undefined || humPct <= 0) return 0;
+export function calculateDewPoint(tempC?: number, humPct?: number): number {
+  if (tempC === undefined || humPct === undefined || isNaN(tempC) || isNaN(humPct) || humPct <= 0 || humPct > 100) {
+    return 0;
+  }
   const a = 17.27;
   const b = 237.7;
+  if (b + tempC === 0) return 0;
   const alpha = ((a * tempC) / (b + tempC)) + Math.log(humPct / 100);
+  if (a - alpha === 0) return 0;
   const dew = (b * alpha) / (a - alpha);
+  if (isNaN(dew) || !isFinite(dew)) return 0;
   return Number(dew.toFixed(1));
 }
 

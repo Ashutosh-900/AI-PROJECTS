@@ -62,19 +62,23 @@ const MetricChartCard: React.FC<MetricChartCardProps> = ({
 
     const width = canvas.width;
     const height = canvas.height;
-    ctx.clearRect(0, 0, width, height);
+    // Dark high-contrast aerospace grid backdrop
+    ctx.fillStyle = '#050a14';
+    ctx.fillRect(0, 0, width, height);
 
-    // Grid lines
-    ctx.strokeStyle = 'rgba(30, 58, 95, 0.3)';
+    // Grid lines with aerospace dashed styling
+    ctx.strokeStyle = 'rgba(14, 116, 144, 0.2)';
     ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, height * 0.25);
-    ctx.lineTo(width, height * 0.25);
-    ctx.moveTo(0, height * 0.5);
-    ctx.lineTo(width, height * 0.5);
-    ctx.moveTo(0, height * 0.75);
-    ctx.lineTo(width, height * 0.75);
-    ctx.stroke();
+    ctx.setLineDash([2, 4]);
+
+    for (let i = 1; i <= 3; i++) {
+      const y = (height / 4) * i;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
 
     // Find all values to determine range
     let allVals: number[] = [];
@@ -92,24 +96,76 @@ const MetricChartCard: React.FC<MetricChartCardProps> = ({
     }
     const range = localMax - localMin;
 
+    // Axis scale labels
+    ctx.fillStyle = '#64748b';
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${localMax.toFixed(1)}`, 6, 12);
+    ctx.fillText(`${localMin.toFixed(1)}`, 6, height - 4);
+
     lines.forEach((line) => {
-      if (line.data.length < 2) return;
-      const len = line.data.length;
+      const validPoints = line.data.map((v) => (v === undefined || isNaN(v) ? localMin : v));
+      if (validPoints.length < 2) return;
+      const len = validPoints.length;
       const step = width / Math.max(len - 1, 10);
 
+      // Pass 1: Translucent gradient area fill below line
+      const grad = ctx.createLinearGradient(0, 0, 0, height);
+      grad.addColorStop(0, `${line.color}33`); // 20% opacity
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+      ctx.beginPath();
+      ctx.fillStyle = grad;
+      for (let i = 0; i < len; i++) {
+        const x = i * step;
+        const v = validPoints[i];
+        const norm = (v - localMin) / range;
+        const y = height - 8 - norm * (height - 16);
+        if (i === 0) {
+          ctx.moveTo(x, height);
+          ctx.lineTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.lineTo((len - 1) * step, height);
+      ctx.closePath();
+      ctx.fill();
+
+      // Pass 2: Glowing neon stroke
+      ctx.save();
+      ctx.shadowColor = line.color;
+      ctx.shadowBlur = 6;
       ctx.beginPath();
       ctx.strokeStyle = line.color;
       ctx.lineWidth = 1.8;
 
+      let lastX = 0;
+      let lastY = height / 2;
+
       for (let i = 0; i < len; i++) {
         const x = i * step;
-        const v = line.data[i];
+        const v = validPoints[i];
         const norm = (v - localMin) / range;
         const y = height - 8 - norm * (height - 16);
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
+
+        lastX = x;
+        lastY = y;
       }
       ctx.stroke();
+      ctx.restore();
+
+      // Live head point reticle
+      ctx.save();
+      ctx.shadowColor = line.color;
+      ctx.shadowBlur = 8;
+      ctx.fillStyle = line.color;
+      ctx.beginPath();
+      ctx.arc(lastX, lastY, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     });
   }, [lines]);
 
@@ -174,12 +230,13 @@ export const DiagnosticsGraphsTab: React.FC<DiagnosticsGraphsTabProps> = ({
   const filteredData = packetHistory.slice(-windowCount);
 
   // Helper stats computer
-  const computeStats = (vals: number[]) => {
-    if (vals.length === 0) return { min: 0, max: 0, avg: 0 };
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-    return { min, max, avg };
+  const computeStats = (vals: (number | undefined)[]) => {
+    const valid = vals.filter((v): v is number => v !== undefined && !isNaN(v));
+    if (valid.length === 0) return { min: 0, max: 0, avg: 0, health: 'NO DATA' as const };
+    const min = Math.min(...valid);
+    const max = Math.max(...valid);
+    const avg = valid.reduce((a, b) => a + b, 0) / valid.length;
+    return { min, max, avg, health: 'OK' as const };
   };
 
   const tempVals = filteredData.map((p) => p.t);
@@ -258,7 +315,7 @@ export const DiagnosticsGraphsTab: React.FC<DiagnosticsGraphsTabProps> = ({
         <MetricChartCard
           title="DHT11 TEMPERATURE"
           icon={<Thermometer className="w-4 h-4 text-cyan-400" />}
-          health="OK"
+          health={tempStats.health}
           min={tempStats.min}
           max={tempStats.max}
           avg={tempStats.avg}
@@ -270,7 +327,7 @@ export const DiagnosticsGraphsTab: React.FC<DiagnosticsGraphsTabProps> = ({
         <MetricChartCard
           title="DHT11 HUMIDITY"
           icon={<Droplets className="w-4 h-4 text-blue-400" />}
-          health="OK"
+          health={humStats.health}
           min={humStats.min}
           max={humStats.max}
           avg={humStats.avg}
@@ -282,7 +339,7 @@ export const DiagnosticsGraphsTab: React.FC<DiagnosticsGraphsTabProps> = ({
         <MetricChartCard
           title="BMP280 PRESSURE"
           icon={<Gauge className="w-4 h-4 text-cyan-400" />}
-          health="OK"
+          health={pressStats.health}
           min={pressStats.min}
           max={pressStats.max}
           avg={pressStats.avg}
@@ -294,7 +351,7 @@ export const DiagnosticsGraphsTab: React.FC<DiagnosticsGraphsTabProps> = ({
         <MetricChartCard
           title="ALTITUDE: BARO VS GPS"
           icon={<Mountain className="w-4 h-4 text-emerald-400" />}
-          health="OK"
+          health={altStats.health}
           min={altStats.min}
           max={altStats.max}
           avg={altStats.avg}
@@ -309,7 +366,7 @@ export const DiagnosticsGraphsTab: React.FC<DiagnosticsGraphsTabProps> = ({
         <MetricChartCard
           title="ATTITUDE: ROLL / PITCH / YAW"
           icon={<Compass className="w-4 h-4 text-indigo-400" />}
-          health="OK"
+          health={rollStats.health}
           min={rollStats.min}
           max={rollStats.max}
           avg={rollStats.avg}
@@ -325,7 +382,7 @@ export const DiagnosticsGraphsTab: React.FC<DiagnosticsGraphsTabProps> = ({
         <MetricChartCard
           title="MPU6050 ACCELEROMETER"
           icon={<Activity className="w-4 h-4 text-cyan-400" />}
-          health="OK"
+          health={accelStats.health}
           min={accelStats.min}
           max={accelStats.max}
           avg={accelStats.avg}
@@ -341,7 +398,7 @@ export const DiagnosticsGraphsTab: React.FC<DiagnosticsGraphsTabProps> = ({
         <MetricChartCard
           title="MPU6050 GYROSCOPE"
           icon={<RotateCw className="w-4 h-4 text-purple-400" />}
-          health="OK"
+          health={gyroStats.health}
           min={gyroStats.min}
           max={gyroStats.max}
           avg={gyroStats.avg}
@@ -357,7 +414,7 @@ export const DiagnosticsGraphsTab: React.FC<DiagnosticsGraphsTabProps> = ({
         <MetricChartCard
           title="GPS SATELLITES TRACKED"
           icon={<Satellite className="w-4 h-4 text-cyan-400" />}
-          health="OK"
+          health={satsStats.health}
           min={satsStats.min}
           max={satsStats.max}
           avg={satsStats.avg}
